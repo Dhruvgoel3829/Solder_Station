@@ -3,6 +3,7 @@
 #include <PID_v1.h>
 #include <RotaryEncoder.h>
 #include <avr/sleep.h>
+#include <string.h>
 #include "main.h"
 
 // Pins
@@ -57,7 +58,8 @@ double consKp = 11.0, consKi = 3.0, consKd = 5.0;
 // Variables for temperature control
 int16_t SetTemp = TEMP_DEFAULT;
 double Input, Output, Setpoint;
-int16_t RawTemp, CurrentTemp;    // Already int16_t
+float RawTemp = 0.0f;
+int16_t CurrentTemp;
 
 // Reed switch debouncing
 #define REED_DEBOUNCE_TIME 50   // Debounce time in milliseconds
@@ -95,7 +97,7 @@ uint32_t buttonmillis;
 uint32_t startTime = 0;  // Track when the device started
 
 // Create PID controller
-PID ctrl(&Input, &Output, &Setpoint, aggKp, aggKi, aggKd, REVERSE);
+PID ctrl(&Input, &Output, &Setpoint, aggKp, aggKi, aggKd, DIRECT);
 
 // Create rotary encoder
 RotaryEncoder encoder(ROTARY_1_PIN, ROTARY_2_PIN);
@@ -165,7 +167,7 @@ bool checkTip() {
 void beepError() {
   // Triple beep for error
   for (uint8_t j = 0; j < 3; j++) {
-    for (uint8_t i = 0; i < 255; i++) {
+    for (uint8_t i = 0; i < 50; i++) {
       digitalWrite(BUZZER_PIN, HIGH);
       delayMicroseconds(125);
       digitalWrite(BUZZER_PIN, LOW);
@@ -233,24 +235,24 @@ void readTemperature() {
   lastAdcReadings[adcReadingIndex] = temp;
   adcReadingIndex = (adcReadingIndex + 1) % ADC_BOUNCE_COUNT;
   
-  // Check for ADC bouncing
-  if (adcReadingIndex == 0) {  // We have a full set of readings
-    int16_t maxReading = lastAdcReadings[0];
-    int16_t minReading = lastAdcReadings[0];
-    for (int i = 1; i < ADC_BOUNCE_COUNT; i++) {
-      if (lastAdcReadings[i] > maxReading) maxReading = lastAdcReadings[i];
-      if (lastAdcReadings[i] < minReading) minReading = lastAdcReadings[i];
-    }
-    isAdcBouncing = (maxReading - minReading) > ADC_BOUNCE_THRESHOLD;
-  }
-  
-  analogWrite(CONTROL_PIN, Output);
-  
-  RawTemp += (temp - RawTemp) * SMOOTHIE;
-  
-  if (!checkADCError()) {
-    calculateTemp();
-  }
+// Check for ADC bouncing
+   if (adcReadingIndex == 0) {  // We have a full set of readings
+     int16_t maxReading = lastAdcReadings[0];
+     int16_t minReading = lastAdcReadings[0];
+     for (int i = 1; i < ADC_BOUNCE_COUNT; i++) {
+       if (lastAdcReadings[i] > maxReading) maxReading = lastAdcReadings[i];
+       if (lastAdcReadings[i] < minReading) minReading = lastAdcReadings[i];
+     }
+     isAdcBouncing = (maxReading - minReading) > ADC_BOUNCE_THRESHOLD;
+   }
+   
+   analogWrite(CONTROL_PIN, (int)Output);
+   
+   RawTemp += (temp - RawTemp) * SMOOTHIE;
+   
+   if (!checkADCError()) {
+     calculateTemp();
+   }
 }
 
 void checkReedSwitch() {
@@ -272,17 +274,20 @@ void checkReedSwitch() {
             SetTemp = (int16_t)(SetTemp * TEMP_REDUCTION);
             Setpoint = (double)SetTemp;
             beep();  // Single beep to indicate temperature reduction
-          } else {
-            // Iron is picked up - restore temperature and boost if needed
-            SetTemp = originalSetTemp;
-            Setpoint = (double)SetTemp;
-            // Only boost if temperature is significantly below setpoint
-            if (abs(CurrentTemp - SetTemp) > TEMP_BOOST) {
-              SetTemp = TEMP_DEFAULT;
-              Setpoint = (double)SetTemp;
-              beep();  // Single beep to indicate temperature restoration
-            }
-          }
+} else {
+             // Iron is picked up - restore temperature and boost if needed
+             SetTemp = originalSetTemp;
+             Setpoint = (double)SetTemp;
+             // Only boost if temperature is significantly below setpoint
+             if (abs(CurrentTemp - SetTemp) > TEMP_BOOST) {
+               SetTemp += TEMP_BOOST;
+               SetTemp = constrain(SetTemp, TEMP_MIN, TEMP_MAX);
+               Setpoint = (double)SetTemp;
+               beep();  // Single beep to indicate temperature boost
+             } else {
+               beep();  // Single beep to indicate temperature restoration
+             }
+           }
         }
       }
     } else {
@@ -367,7 +372,7 @@ void updateDisplay() {
 }
 
 void beep() {
-  for (uint8_t i = 0; i < 255; i++) {
+  for (uint8_t i = 0; i < 50; i++) {
     digitalWrite(BUZZER_PIN, HIGH);
     delayMicroseconds(125);
     digitalWrite(BUZZER_PIN, LOW);
@@ -458,17 +463,18 @@ void loop() {
     lastTempRead = millis();
   }
 
-  // Normal operation
-  Setpoint = (double)SetTemp;
-  double gap = abs(Setpoint - CurrentTemp);
-  if (gap < 30) {
-    ctrl.SetTunings(consKp, consKi, consKd);
-  } else {
-    ctrl.SetTunings(aggKp, aggKi, aggKd);
-  }
-  Input = CurrentTemp;
-  ctrl.Compute();
-  analogWrite(CONTROL_PIN, Output);
+// Normal operation
+   Setpoint = (double)SetTemp;
+   double gap = abs(Setpoint - CurrentTemp);
+   if (gap < 30) {
+     ctrl.SetTunings(consKp, consKi, consKd);
+   } else {
+     ctrl.SetTunings(aggKp, aggKi, aggKd);
+   }
+   Input = CurrentTemp;
+   if (ctrl.Compute()) {
+     analogWrite(CONTROL_PIN, (int)Output);
+   }
 
   // Update display
   updateDisplay();
