@@ -1,0 +1,15 @@
+# Project specification - internal reference only
+PROJECT_SPEC.md
+
+# PlatformIO build artifacts
+.v1/pio/soldering station/.pio/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
